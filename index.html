@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Öğrenci Puan Paneli</title>
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        button { cursor: pointer; transition: all 0.2s; }
+        button:hover { transform: scale(1.03); }
+        button:active { transform: scale(0.97); }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8 font-sans">
+
+    <div class="max-w-2xl mx-auto space-y-6">
+        
+        <!-- ÜST PANEL -->
+        <div class="bg-white rounded-2xl shadow-sm p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">Öğrenci Puan Paneli</h1>
+                <p class="text-xs text-gray-500 mt-1">Veriler bu cihazın hafızasına otomatik kaydedilir.</p>
+            </div>
+            
+            <div class="flex flex-wrap gap-2">
+                <select id="class-select" onchange="selectClass(this.value)" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-xl p-2.5 min-w-[120px] focus:outline-none"></select>
+                <button onclick="exportData()" class="px-3 py-2.5 bg-blue-50 text-blue-600 border border-blue-100 text-sm font-medium rounded-xl hover:bg-blue-100">Yedek İndir</button>
+                <button onclick="triggerImport()" class="px-3 py-2.5 bg-purple-50 text-purple-600 border border-purple-100 text-sm font-medium rounded-xl hover:bg-purple-100">Yedek Yükle</button>
+                <input type="file" id="import-file" class="hidden" accept=".json" onchange="importData(event)">
+                <button onclick="clearAllData()" class="px-3 py-2.5 bg-red-50 text-red-600 border border-red-100 text-sm font-medium rounded-xl hover:bg-red-100">Sıfırla</button>
+            </div>
+        </div>
+
+        <!-- ORTA PANEL -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-white rounded-2xl shadow-sm p-5 flex flex-col">
+                <h3 class="text-sm font-bold text-gray-700 mb-2">📋 Excel'den Toplu Yükle</h3>
+                <textarea id="excel-input" placeholder="Excel'den kopyalayıp yapıştırın.&#10;Örn:&#10;Ahmet Yılmaz	10-A&#10;Ayşe Demir	10-B" class="w-full flex-1 min-h-[100px] border border-gray-200 rounded-xl p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                <button onclick="importFromExcel()" class="w-full mt-2 bg-blue-600 text-white text-sm font-medium py-2 rounded-xl hover:bg-blue-700">Listeyi İçeri Aktar</button>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm p-5 flex flex-col justify-between">
+                <h3 class="text-sm font-bold text-gray-700 mb-2">👤 Tek Öğrenci Ekle</h3>
+                <div class="space-y-3">
+                    <input type="text" id="new-student-name" placeholder="Öğrenci Adı Soyadı" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <input type="text" id="new-student-class" placeholder="Sınıfı (Örn: 10-A)" class="w-full border border-gray-200 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <button onclick="addSingleStudent()" class="w-full mt-4 bg-emerald-600 text-white text-sm font-medium py-2 rounded-xl hover:bg-emerald-700">Öğrenciyi Ekle</button>
+            </div>
+        </div>
+
+        <!-- LİSTE PANELİ -->
+        <div class="bg-white rounded-2xl shadow-sm p-6">
+            <div id="student-list" class="space-y-3"></div>
+        </div>
+
+    </div>
+
+    <script>
+        const defaultRows = [
+            { __backendId: "st-1", name: "Örnek Öğrenci 1", score: 85, class: "10-A" },
+            { __backendId: "st-2", name: "Örnek Öğrenci 2", score: 95, class: "10-A" }
+        ];
+
+        let rows = JSON.parse(localStorage.getItem('rows')) || defaultRows;
+        let activeClass = localStorage.getItem('activeClass') || "10-A";
+        
+        const savedStates = localStorage.getItem('scoreStates');
+        const scoreStates = savedStates ? new Map(JSON.parse(savedStates)) : new Map();
+
+        const deltas = { minus: -2, question: -1, plus: 0.5 };
+        function clamp(score) { return Math.max(0, Math.min(100, score)); }
+
+        function getColorClass(score) {
+            if (score >= 90) return "bg-green-50 border-green-200 text-green-800";
+            if (score >= 70) return "bg-yellow-50 border-yellow-200 text-yellow-800";
+            if (score >= 60) return "bg-orange-50 border-orange-200 text-orange-800";
+            return "bg-red-50 border-red-200 text-red-800";
+        }
+
+        function saveAll() {
+            localStorage.setItem('rows', JSON.stringify(rows));
+            localStorage.setItem('activeClass', activeClass);
+            localStorage.setItem('scoreStates', JSON.stringify(Array.from(scoreStates.entries())));
+        }
+
+        function selectClass(className) {
+            activeClass = className;
+            saveAll();
+            renderStudents();
+        }
+
+        function updateClassDropdown() {
+            const select = document.getElementById('class-select');
+            const classes = [...new Set(rows.map(r => r.class))].sort();
+            if(classes.length && !classes.includes(activeClass)) { activeClass = classes[0]; }
+            select.innerHTML = classes.map(c => `<option value="${c}" ${c === activeClass ? 'selected' : ''}>${c}</option>`).join('');
+        }
+
+        function addSingleStudent() {
+            const nameInput = document.getElementById('new-student-name');
+            const classInput = document.getElementById('new-student-class');
+            if(!nameInput.value.trim() || !classInput.value.trim()) return alert("Eksik bilgi!");
+
+            const newId = "st-" + Date.now();
+            rows.push({ __backendId: newId, name: nameInput.value.trim(), score: 70, class: classInput.value.trim() });
+            activeClass = classInput.value.trim();
+            saveAll();
+            updateClassDropdown();
+            renderStudents();
+            nameInput.value = ""; classInput.value = "";
+        }
+
+        function importFromExcel() {
+            const input = document.getElementById('excel-input').value.trim();
+            if(!input) return alert("Veri yok!");
+            const lines = input.split('\n');
+            const newRows = [];
+            lines.forEach((line, idx) => {
+                const parts = line.split('\t');
+                if(parts[0] && parts[0].trim()) {
+                    newRows.push({ __backendId: `ex-${idx}-${Date.now()}`, name: parts[0].trim(), score: 70, class: parts[1] ? parts[1].trim() : "Genel" });
+                }
+            });
+            if(newRows.length) {
+                rows = newRows; activeClass = rows[0].class; scoreStates.clear();
+                saveAll(); updateClassDropdown(); renderStudents();
+                document.getElementById('excel-input').value = "";
+            }
+        }
+
+        function deleteStudent(id) {
+            if(confirm("Silinsin mi?")) {
+                rows = rows.filter(r => r.__backendId !== id);
+                scoreStates.delete(id); saveAll(); updateClassDropdown(); renderStudents();
+            }
+        }
+
+        function changeScore(id, op) {
+            const row = rows.find(item => item.__backendId === id);
+            if (!row) return;
+            let state = scoreStates.get(id) || { confirmed: clamp(row.score), desired: clamp(row.score), saving: false };
+            const nextScore = clamp(state.desired + deltas[op]);
+            state.desired = nextScore;
+            scoreStates.set(id, state);
+            saveAll();
+            const container = document.getElementById(`student-card-${id}`);
+            if (container) {
+                container.className = `p-4 rounded-xl border flex justify-between items-center transition-all duration-200 ${getColorClass(nextScore)}`;
+                container.querySelector('.student-info').textContent = `${row.name} - ${nextScore} puan`;
+            }
+        }
+
+        function renderStudents() {
+            const students = rows.filter(student => student.class === activeClass).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+            const list = document.getElementById('student-list');
+            list.innerHTML = students.length === 0 ? `<p class="text-center text-gray-400 py-6 text-sm">Öğrenci yok.</p>` : "";
+            const fragment = document.createDocumentFragment();
+            for (const row of students) {
+                const score = scoreStates.get(row.__backendId)?.desired ?? clamp(row.score);
+                const el = document.createElement("div");
+                el.innerHTML = `
+                    <div id="student-card-${row.__backendId}" class="p-4 rounded-xl border flex justify-between items-center shadow-xs ${getColorClass(score)}">
+                        <span class="student-info font-semibold">${row.name} - ${score} puan</span>
+                        <div class="flex items-center space-x-1">
+                            <button class="w-8 h-8 flex items-center justify-center bg-white rounded-lg shadow-xs text-gray-700 font-bold border border-gray-200" onclick="changeScore('${row.__backendId}','plus')">+</button>
+                            <button class="w-8 h-8 flex items-center justify-center bg-white rounded-lg shadow-xs text-gray-700 font-bold border border-gray-200" onclick="changeScore('${row.__backendId}','minus')">-</button>
+                            <button class="w-8 h-8 flex items-center justify-center bg-white rounded-lg shadow-xs text-gray-700 font-bold border border-gray-200" onclick="changeScore('${row.__backendId}','question')">?</button>
